@@ -15,15 +15,8 @@ import { migrarTodoAVPS } from '../lib/vpsService';
 export default function Inventario() {
   const { role } = useAuth();
   const { tasaDolar } = useConfig();
-  const [productos, setProductos] = useState<(Producto & { costo_usd?: number })[]>(() => {
-    try {
-      const saved = localStorage.getItem('bibi_store_cached_productos');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
-  const [cargando, setCargando] = useState(productos.length === 0);
+  const [productos, setProductos] = useState<(Producto & { costo_usd?: number })[]>([]);
+  const [cargando, setCargando] = useState(true);
   const [sincronizando, setSincronizando] = useState(false);
   const [busqueda, setBusqueda] = useState('');
   
