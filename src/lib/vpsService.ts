@@ -21,20 +21,55 @@ export async function checkVPSOnline(): Promise<VPSStatus> {
   };
 }
 
-export async function migrarTodoAVPS(payload: {
-  productos: any[];
-  config?: any;
-  fiados?: any[];
-  ventas?: any[];
-}): Promise<{ success: boolean; totalProductos: number; mensaje: string }> {
-  const res = await api.bulkUploadProducts(payload.productos);
+export async function migrarTodoAVPS(
+  payload: {
+    productos: any[];
+    config?: any;
+    fiados?: any[];
+    ventas?: any[];
+  },
+  onProgress?: (mensaje: string) => void
+): Promise<{ success: boolean; totalProductos: number; mensaje: string }> {
+  const productos = payload.productos || [];
+  const CHUNK_SIZE = 50;
+  const total = productos.length;
+  const totalChunks = Math.ceil(total / CHUNK_SIZE) || 1;
+
+  // Cachear todos los productos en localStorage al iniciar
+  try {
+    localStorage.setItem('bibi_store_cached_productos', JSON.stringify(productos));
+  } catch (e) {
+    console.warn("No se pudo cachear en localStorage:", e);
+  }
+
+  let lastRes: any = { totalProductos: total };
+
+  for (let i = 0; i < totalChunks; i++) {
+    const chunk = productos.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
+    const countEnviados = Math.min((i + 1) * CHUNK_SIZE, total);
+    const mensajeProgreso = `Sincronizando lote ${i + 1} de ${totalChunks} (${countEnviados}/${total} productos enviados)...`;
+    
+    if (onProgress) {
+      onProgress(mensajeProgreso);
+    }
+
+    const res = await api.bulkUploadProducts(chunk, i > 0);
+    if (res) {
+      lastRes = res;
+    }
+  }
+
   if (payload.config) {
+    if (onProgress) {
+      onProgress("Guardando configuración...");
+    }
     await api.saveConfig(payload.config);
   }
+
   return {
     success: true,
-    totalProductos: res.totalProductos || payload.productos.length,
-    mensaje: res.message || 'Productos sincronizados con éxito en el servidor',
+    totalProductos: lastRes.totalProductos || total,
+    mensaje: lastRes.message || 'Productos sincronizados con éxito en el servidor',
   };
 }
 

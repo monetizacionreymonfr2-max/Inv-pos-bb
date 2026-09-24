@@ -59,10 +59,15 @@ export default function Ajustes() {
         throw new Error("No hay productos cargados en memoria. Abre la pantalla de Inventario primero.");
       }
 
-      const res = await migrarTodoAVPS({
-        productos: prods,
-        config: { tasa_dolar: Number(nuevaTasa) || tasaDolar || 50 }
-      });
+      const res = await migrarTodoAVPS(
+        {
+          productos: prods,
+          config: { tasa_dolar: Number(nuevaTasa) || tasaDolar || 50 }
+        },
+        (msg) => {
+          toast.loading(msg, { id: loadingToast });
+        }
+      );
 
       toast.success(`🎉 ¡Migración Perfecta! ${res.totalProductos} productos guardados en la VPS de DigitalOcean.`, {
         id: loadingToast,
@@ -104,10 +109,15 @@ export default function Ajustes() {
         localStorage.setItem('bibi_store_cached_productos', JSON.stringify(prods));
       } catch {}
 
-      const res = await migrarTodoAVPS({
-        productos: prods,
-        config: { tasa_dolar: Number(nuevaTasa) || tasaDolar || 50 }
-      });
+      const res = await migrarTodoAVPS(
+        {
+          productos: prods,
+          config: { tasa_dolar: Number(nuevaTasa) || tasaDolar || 50 }
+        },
+        (msg) => {
+          toast.loading(msg, { id: toastId });
+        }
+      );
 
       toast.success(`🎉 ¡Restauración completa! ${res.totalProductos || prods.length} productos guardados en tu VPS y en este navegador.`, { id: toastId, duration: 8000 });
       checkVPSOnline().then(setVpsStatus);

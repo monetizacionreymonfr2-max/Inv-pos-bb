@@ -177,16 +177,19 @@ app.delete('/api/vps/productos/:id', (req, res) => {
   }
 });
 
-// POST /api/products/bulk -> Poblar masivamente el catálogo desde respaldo JSON
+// POST /api/products/bulk -> Poblar masivamente el catálogo desde respaldo JSON (con soporte de chunks/append)
 app.post('/api/products/bulk', (req, res) => {
   try {
     let prods = [];
+    let append = false;
     if (Array.isArray(req.body)) {
       prods = req.body;
     } else if (req.body && Array.isArray(req.body.products)) {
       prods = req.body.products;
+      append = !!req.body.append;
     } else if (req.body && Array.isArray(req.body.productos)) {
       prods = req.body.productos;
+      append = !!req.body.append;
     } else {
       return res.status(400).json({ error: 'Se esperaba un array de productos' });
     }
@@ -197,17 +200,31 @@ app.post('/api/products/bulk', (req, res) => {
       id: p.id || `prod_${Date.now()}_${idx}`
     }));
 
-    writeJSON(PRODUCTOS_FILE, sanitized);
+    let existing = [];
+    if (append && fs.existsSync(PRODUCTOS_FILE)) {
+      existing = readJSON(PRODUCTOS_FILE, []);
+    }
+
+    const productMap = new Map();
+    if (append) {
+      existing.forEach(p => productMap.set(p.id, p));
+      sanitized.forEach(p => productMap.set(p.id, { ...(productMap.get(p.id) || {}), ...p }));
+    } else {
+      sanitized.forEach(p => productMap.set(p.id, p));
+    }
+
+    const finalProducts = Array.from(productMap.values());
+    writeJSON(PRODUCTOS_FILE, finalProducts);
 
     // Save automatic backup with timestamp
     const backupName = path.join(DATA_DIR, `backup_bulk_${Date.now()}.json`);
-    writeJSON(backupName, { count: sanitized.length, date: new Date().toISOString() });
+    writeJSON(backupName, { count: finalProducts.length, date: new Date().toISOString() });
 
-    console.log(`[BULK UPLOAD] ${sanitized.length} productos guardados con éxito.`);
+    console.log(`[BULK UPLOAD CHUNK] ${sanitized.length} productos procesados (Append: ${append}). Total en servidor: ${finalProducts.length}.`);
     res.json({
       success: true,
-      totalProductos: sanitized.length,
-      message: `${sanitized.length} productos sincronizados masivamente en el servidor`
+      totalProductos: finalProducts.length,
+      message: `${finalProducts.length} productos sincronizados en el servidor`
     });
   } catch (err) {
     console.error('Error in bulk upload:', err);

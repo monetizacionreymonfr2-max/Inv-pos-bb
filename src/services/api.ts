@@ -167,18 +167,20 @@ export async function deleteProduct(id: string): Promise<boolean> {
 }
 
 /**
- * POST /api/products/bulk -> Poblar masivamente el catálogo desde JSON
+ * POST /api/products/bulk -> Poblar masivamente el catálogo desde JSON (con soporte de lotes/append)
  */
-export async function bulkUploadProducts(productos: any[]): Promise<{
+export async function bulkUploadProducts(productos: any[], append: boolean = false): Promise<{
   success: boolean;
   totalProductos: number;
   message?: string;
 }> {
-  // Guardar inmediatamente en localStorage
-  try {
-    localStorage.setItem('bibi_store_cached_productos', JSON.stringify(productos));
-  } catch (e) {
-    console.warn("No se pudo cachear en localStorage por tamaño:", e);
+  if (!append) {
+    // Guardar inmediatamente en localStorage solo en el primer lote
+    try {
+      localStorage.setItem('bibi_store_cached_productos', JSON.stringify(productos));
+    } catch (e) {
+      console.warn("No se pudo cachear en localStorage por tamaño:", e);
+    }
   }
 
   return await request<{
@@ -187,7 +189,7 @@ export async function bulkUploadProducts(productos: any[]): Promise<{
     message?: string;
   }>('/products/bulk', {
     method: 'POST',
-    body: JSON.stringify({ products: productos }),
+    body: JSON.stringify({ products: productos, append }),
   });
 }
 
