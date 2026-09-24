@@ -325,7 +325,7 @@ app.post('/api/products/bulk', async (req, res) => {
         const imagen_url = String(p.imagen_url || p.image || p.imagen || '');
 
         await db.run(
-          `INSERT INTO products (id, name, barcode, price, cost, stock, category) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, barcode=excluded.barcode, price=excluded.price, cost=excluded.cost, stock=excluded.stock, category=excluded.category`,
+          `INSERT INTO products (id, name, barcode, price, cost, stock, category, unidad_medida, imagen_url) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, barcode=excluded.barcode, price=excluded.price, cost=excluded.cost, stock=excluded.stock, category=excluded.category`,
           [id, name, barcode, price, cost, stock, category]
         );
       }

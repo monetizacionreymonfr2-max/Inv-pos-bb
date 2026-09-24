@@ -27,6 +27,8 @@
     "react-dom": "^19.0.0",
     "react-hot-toast": "^2.6.0",
     "react-router-dom": "^7.14.2",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^6.0.1",
     "tailwind-merge": "^3.5.0",
     "vite": "^6.2.0"
   },
