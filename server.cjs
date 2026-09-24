@@ -8,8 +8,36 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Allow large payloads (for products with base64 images)
-app.use(express.json({ limit: '100mb' }));
-app.use(express.urlencoded({ extended: true, limit: '100mb' }));
+app.use(express.json({ limit: '200mb' }));
+app.use(express.urlencoded({ extended: true, limit: '200mb' }));
+
+// Ensure uploads directory exists for image decoupling pipeline
+const uploadsDir = path.join(__dirname, 'public', 'uploads', 'productos');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+// Pipeline for Base64 image decoupling
+function processBase64Image(item, productId) {
+  let imgUrl = item.imagen_url || item.image || item.imagen || '';
+  if (imgUrl.startsWith('data:image/')) {
+    try {
+      const matches = imgUrl.match(/^data:image\/([a-zA-Z0-9+-]+);base64,(.+)$/);
+      if (matches && matches.length === 3) {
+        const ext = matches[1].toLowerCase() === 'jpeg' ? 'jpg' : matches[1].toLowerCase();
+        const base64Data = matches[2];
+        const buffer = Buffer.from(base64Data, 'base64');
+        const filename = `${productId}.${ext}`;
+        const filepath = path.join(uploadsDir, filename);
+        fs.writeFileSync(filepath, buffer);
+        imgUrl = `/uploads/productos/${filename}`;
+      }
+    } catch (err) {
+      console.error(`Error decoupling base64 image for product ${productId}:`, err);
+    }
+  }
+  return imgUrl;
+}
 
 // CORS headers
 app.use((req, res, next) => {
@@ -107,17 +135,33 @@ async function initDb() {
     });
 
     await db.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA synchronous = NORMAL;
+
+      CREATE TABLE IF NOT EXISTS categorias (
+        id TEXT PRIMARY KEY,
+        nombre TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS products (
         id TEXT PRIMARY KEY,
-        name TEXT,
+        name TEXT NOT NULL,
         barcode TEXT,
-        price REAL,
-        cost REAL,
-        stock INTEGER,
+        price REAL NOT NULL DEFAULT 0,
+        cost REAL NOT NULL DEFAULT 0,
+        stock REAL NOT NULL DEFAULT 0,
         category TEXT,
-        unidad_medida TEXT,
+        unidad_medida TEXT DEFAULT 'unid',
         imagen_url TEXT
       );
+
+      CREATE TABLE IF NOT EXISTS costos_productos (
+        id TEXT PRIMARY KEY,
+        producto_id TEXT NOT NULL,
+        costo_usd REAL NOT NULL DEFAULT 0,
+        fecha_actualizacion INTEGER
+      );
+
       CREATE TABLE IF NOT EXISTS sales (
         id TEXT PRIMARY KEY,
         data TEXT,
@@ -691,6 +735,84 @@ app.delete('/api/access-codes/:id', async (req, res) => {
     await db.run('DELETE FROM access_codes WHERE id = ?', [id]);
     res.json({ success: true });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/vps/restore-backup -> Chunked batch restore with image decoupling & WAL transaction upsert
+app.post('/api/vps/restore-backup', async (req, res) => {
+  try {
+    const { productos, batchIndex, totalBatches } = req.body;
+    if (!productos || !Array.isArray(productos)) {
+      return res.status(400).json({ error: 'Se requiere un array de productos válido' });
+    }
+
+    await db.run('BEGIN TRANSACTION');
+    let processedCount = 0;
+
+    try {
+      for (let i = 0; i < productos.length; i++) {
+        const p = productos[i];
+        const id = String(p.id || p._id || `prod_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 6)}`);
+        const name = String(p.nombre || p.name || p.title || 'Sin Nombre');
+        const barcode = String(p.codigo_barras || p.barcode || p.codigo || 'N/A');
+        const price = Number(p.precio_usd !== undefined ? p.precio_usd : (p.precio !== undefined ? p.precio : (p.price !== undefined ? p.price : 0))) || 0;
+        const cost = Number(p.costo_usd !== undefined ? p.costo_usd : (p.costo !== undefined ? p.costo : (p.cost !== undefined ? p.cost : 0))) || 0;
+        const stock = Number(p.stock !== undefined ? p.stock : (p.existencia !== undefined ? p.existencia : (p.cantidad !== undefined ? p.cantidad : 0))) || 0;
+        const category = String(p.categoria || p.category || 'Sin Categoría');
+        const unidad_medida = (p.unidad_medida === 'kg' || p.unidad === 'kg') ? 'kg' : 'unid';
+        
+        // Decouple image if Base64
+        const imagen_url = processBase64Image(p, id);
+
+        // Upsert into products
+        await db.run(
+          `INSERT INTO products (id, name, barcode, price, cost, stock, category, unidad_medida, imagen_url)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             name = excluded.name,
+             barcode = excluded.barcode,
+             price = excluded.price,
+             cost = excluded.cost,
+             stock = excluded.stock,
+             category = excluded.category,
+             unidad_medida = excluded.unidad_medida,
+             imagen_url = excluded.imagen_url`,
+          [id, name, barcode, price, cost, stock, category, unidad_medida, imagen_url]
+        );
+
+        // Upsert into costos_productos
+        await db.run(
+          `INSERT INTO costos_productos (id, producto_id, costo_usd, fecha_actualizacion)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             costo_usd = excluded.costo_usd,
+             fecha_actualizacion = excluded.fecha_actualizacion`,
+          [`cost_${id}`, id, cost, Date.now()]
+        );
+
+        processedCount++;
+      }
+
+      await db.run('COMMIT');
+    } catch (txErr) {
+      await db.run('ROLLBACK');
+      throw txErr;
+    }
+
+    // Sync bibi_store_productos_completos.json
+    const allProducts = await getStoredProducts();
+    await saveStoredProducts(allProducts);
+
+    console.log(`[RESTORE BACKUP] Lote ${batchIndex !== undefined ? batchIndex + 1 : 1} de ${totalBatches || 1} procesado. (${processedCount} ítems)`);
+    res.json({
+      success: true,
+      procesados: processedCount,
+      totalProductosDB: allProducts.length,
+      mensaje: `Lote procesado correctamente`
+    });
+  } catch (err) {
+    console.error('Error in restore-backup:', err);
     res.status(500).json({ error: err.message });
   }
 });

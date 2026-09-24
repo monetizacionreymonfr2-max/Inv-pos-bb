@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import toast from 'react-hot-toast';
 import { exportarProductosJSON, descargarJSON, ProductoExportJSON } from '../lib/exportProductos';
 import { checkVPSOnline, migrarTodoAVPS, VPSStatus } from '../lib/vpsService';
+import RestaurarRespaldoVPS from '../components/RestaurarRespaldoVPS';
 
 export default function Ajustes() {
   const { tasaDolar, actualizarTasa } = useConfig();
@@ -625,6 +626,8 @@ echo "========================================================="
               )}
             </div>
           </section>
+
+          <RestaurarRespaldoVPS />
 
           <section className="bg-yellow-50 border-4 border-yellow-400 p-6 flex flex-col gap-4 shadow-[8px_8px_0px_rgba(250,204,21,1)] relative group">
              <h2 className="text-xl font-black uppercase tracking-widest text-black flex items-center gap-2">
