@@ -160,10 +160,16 @@ export async function getProducts(): Promise<Producto[]> {
     }
 
     if (prods.length > 0) {
+      const sanitized = prods.map(p => ({
+        ...p,
+        precio_usd: Number(p.precio_usd) || 0,
+        costo_usd: Number(p.costo_usd) || 0,
+        stock: Number(p.stock) || 0,
+      }));
       try {
-        localStorage.setItem('bibi_store_cached_productos', JSON.stringify(prods));
+        localStorage.setItem('bibi_store_cached_productos', JSON.stringify(sanitized));
       } catch {}
-      return prods;
+      return sanitized;
     }
   } catch (err) {
     console.warn('Usando cache local de productos por error en servidor:', err);
@@ -174,7 +180,14 @@ export async function getProducts(): Promise<Producto[]> {
     const cached = localStorage.getItem('bibi_store_cached_productos');
     if (cached) {
       const parsed = JSON.parse(cached);
-      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed)) {
+        return parsed.map((p: any) => ({
+          ...p,
+          precio_usd: Number(p.precio_usd) || 0,
+          costo_usd: Number(p.costo_usd) || 0,
+          stock: Number(p.stock) || 0,
+        }));
+      }
     }
   } catch {}
   return [];

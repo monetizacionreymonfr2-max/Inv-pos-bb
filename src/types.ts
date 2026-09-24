@@ -19,6 +19,7 @@ export interface Producto {
   id: string;
   nombre: string;
   precio_usd: number;
+  costo_usd?: number;
   stock: number;
   codigo_barras: string;
   imagen_url?: string;
