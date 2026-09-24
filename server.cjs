@@ -23,7 +23,12 @@ app.use((req, res, next) => {
 });
 
 let db;
-const PRODUCTS_JSON_FILE = path.join(__dirname, 'bibi_store_productos_completos.json');
+const possiblePaths = [
+  path.join(__dirname, 'bibi_store_productos_completos.json'),
+  path.join('/root/Inv-pos-bb', 'bibi_store_productos_completos.json'),
+  path.join('/root', 'bibi_store_productos_completos.json')
+];
+const PRODUCTS_JSON_FILE = possiblePaths.find(p => fs.existsSync(p)) || possiblePaths[0];
 
 // Helper to normalize product format
 function normalizeProductForClient(p) {
@@ -59,7 +64,7 @@ async function getStoredProducts() {
       }
     }
   } catch (e) {
-    console.error('Error reading bibi_store_productos_completos.json:', e);
+    console.error('CRITICAL Error reading/parsing bibi_store_productos_completos.json:', e.message, e.stack);
   }
 
   // Fallback to SQLite
@@ -136,6 +141,10 @@ async function initDb() {
         data TEXT
       );
     `);
+
+    try { await db.exec(`ALTER TABLE products ADD COLUMN unidad_medida TEXT;`); } catch {}
+    try { await db.exec(`ALTER TABLE products ADD COLUMN imagen_url TEXT;`); } catch {}
+    try { await db.exec(`ALTER TABLE products ADD COLUMN cost REAL;`); } catch {}
 
     // Sync SQLite with bibi_store_productos_completos.json if json exists
     const currentProds = await getStoredProducts();
