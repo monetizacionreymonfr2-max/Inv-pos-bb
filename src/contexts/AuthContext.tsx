@@ -60,8 +60,8 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
       if (savedSession) {
         const parsed = JSON.parse(savedSession);
         if (parsed && parsed.role && parsed.role !== 'none') {
-          setUser(parsed.user);
-          setRole(parsed.role);
+          setUser(parsed.user || null);
+          setRole(parsed.role || 'admin');
           setLoading(false);
           return;
         }
@@ -74,7 +74,7 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
 
   // Función para iniciar sesión con PIN o Token de acceso
   const loginWithPin = async (rawPin: string): Promise<{ success: boolean; role?: UserRole; message?: string }> => {
-    const pin = rawPin.trim().toUpperCase();
+    const pin = (rawPin || '').trim().toUpperCase();
     if (!pin) {
       return { success: false, message: 'Ingrese un PIN o código válido' };
     }
@@ -87,12 +87,13 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
         displayName: 'Super Admin',
         authMethod: 'pin'
       };
+      const assignedRole: UserRole = 'superadmin';
       setUser(superUser);
-      setRole('superadmin');
+      setRole(assignedRole);
       try {
-        localStorage.setItem('bibi_store_session', JSON.stringify({ user: superUser, role: 'superadmin' }));
+        localStorage.setItem('bibi_store_session', JSON.stringify({ user: superUser, role: assignedRole }));
       } catch {}
-      return { success: true, role: 'superadmin' };
+      return { success: true, role: assignedRole };
     }
 
     // 2. Comprobar contra PIN Admin / Dueña
@@ -103,12 +104,13 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
         displayName: 'Dueña (Bibi Store)',
         authMethod: 'pin'
       };
+      const assignedRole: UserRole = 'admin';
       setUser(adminUser);
-      setRole('admin');
+      setRole(assignedRole);
       try {
-        localStorage.setItem('bibi_store_session', JSON.stringify({ user: adminUser, role: 'admin' }));
+        localStorage.setItem('bibi_store_session', JSON.stringify({ user: adminUser, role: assignedRole }));
       } catch {}
-      return { success: true, role: 'admin' };
+      return { success: true, role: assignedRole };
     }
 
     // 3. Comprobar contra PIN Cajera
@@ -119,18 +121,19 @@ export const AuthProvider: React.FC<{children: React.ReactNode}> = ({ children }
         displayName: 'Cajera Bibi Store',
         authMethod: 'pin'
       };
+      const assignedRole: UserRole = 'cajero';
       setUser(cajeroUser);
-      setRole('cajero');
+      setRole(assignedRole);
       try {
-        localStorage.setItem('bibi_store_session', JSON.stringify({ user: cajeroUser, role: 'cajero' }));
+        localStorage.setItem('bibi_store_session', JSON.stringify({ user: cajeroUser, role: assignedRole }));
       } catch {}
-      return { success: true, role: 'cajero' };
+      return { success: true, role: assignedRole };
     }
 
     // 4. Comprobar si es un Token de un solo uso en la lista de códigos del servidor
     try {
       const codes = await getAccessCodes();
-      const match = codes.find(c => String(c.id).toUpperCase() === pin);
+      const match = (codes || []).find(c => c && String(c.id || '').toUpperCase() === pin);
       if (match) {
         if (match.usado) {
           return { success: false, message: 'Este código ya fue utilizado.' };

@@ -32,10 +32,11 @@ export default function TiendaPublica() {
     });
   }, []);
 
-  const prodFiltrados = productos.filter(p => {
+  const prodFiltrados = (productos || []).filter(p => {
+    if (!p) return false;
     const matchCat = categoriaSel === 'Todas' || (p.categoria || 'Sin Categoría') === categoriaSel;
-    const matchBus = p.nombre.toLowerCase().includes(busqueda.toLowerCase()) || 
-                     (p.codigo_barras && p.codigo_barras.includes(busqueda));
+    const matchBus = (p.nombre || '').toLowerCase().includes((busqueda || '').toLowerCase()) || 
+                     (p.codigo_barras && (p.codigo_barras || '').toLowerCase().includes((busqueda || '').toLowerCase()));
     return matchCat && matchBus;
   });
 

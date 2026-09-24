@@ -82,10 +82,11 @@ export default function Vender() {
     }
   };
 
-  const prodFiltrados = productos.filter(p => {
-    const term = busqueda.toLowerCase();
-    const matchNombre = p.nombre.toLowerCase().includes(term);
-    const matchRef = p.codigo_barras && p.codigo_barras.toLowerCase().includes(term);
+  const prodFiltrados = (productos || []).filter(p => {
+    if (!p) return false;
+    const term = (busqueda || '').toLowerCase();
+    const matchNombre = (p.nombre || '').toLowerCase().includes(term);
+    const matchRef = p.codigo_barras && (p.codigo_barras || '').toLowerCase().includes(term);
     return matchNombre || matchRef;
   });
 
@@ -190,8 +191,8 @@ export default function Vender() {
   };
 
   const handleScan = (code: string) => {
-    const term = code.toLowerCase();
-    const match = productos.find(p => p.codigo_barras?.toLowerCase() === term);
+    const term = (code || '').toLowerCase();
+    const match = (productos || []).find(p => p && (p.codigo_barras || '').toLowerCase() === term);
 
     if (match) {
       if (match.stock > 0) {

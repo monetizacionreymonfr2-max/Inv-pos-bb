@@ -47,8 +47,8 @@ export default function Fiados() {
     cargarFiados();
   }, []);
 
-  const fiadosFiltrados = fiados.filter(f => f.cliente.toLowerCase().includes(busqueda.toLowerCase()));
-  const totalPendiente = fiados.filter(f => f.estado === 'pendiente').reduce((acc, curr) => acc + curr.monto_usd, 0);
+  const fiadosFiltrados = (fiados || []).filter(f => f && (f.cliente || '').toLowerCase().includes((busqueda || '').toLowerCase()));
+  const totalPendiente = (fiados || []).filter(f => f && f.estado === 'pendiente').reduce((acc, curr) => acc + (curr?.monto_usd || 0), 0);
 
   if (role === 'cajero') {
     return (
@@ -63,7 +63,7 @@ export default function Fiados() {
   const guardarFiadoSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const existing = fiados.find(f => f.cliente.toLowerCase() === cliente.trim().toLowerCase() && f.estado === 'pendiente');
+      const existing = (fiados || []).find(f => f && (f.cliente || '').toLowerCase() === (cliente || '').trim().toLowerCase() && f.estado === 'pendiente');
       
       const nuevoMonto = existing ? existing.monto_usd + Number(montoUSD) : Number(montoUSD);
       const nuevaDesc = existing 
