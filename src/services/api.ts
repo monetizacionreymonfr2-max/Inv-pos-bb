@@ -149,8 +149,14 @@ if (typeof window !== 'undefined') {
  */
 export async function getProducts(): Promise<Producto[]> {
   try {
-    const data = await request<any>('/products', { method: 'GET' });
-    let prods: Producto[] = [];
+    let data: any = null;
+    try {
+      data = await request<any>('/products', { method: 'GET' });
+    } catch {
+      data = await request<any>('/productos', { method: 'GET' });
+    }
+
+    let prods: any[] = [];
     if (Array.isArray(data)) {
       prods = data;
     } else if (data && Array.isArray(data.products)) {
@@ -160,12 +166,18 @@ export async function getProducts(): Promise<Producto[]> {
     }
 
     if (prods.length > 0) {
-      const sanitized = prods.map(p => ({
-        ...p,
-        precio_usd: Number(p.precio_usd) || 0,
-        costo_usd: Number(p.costo_usd) || 0,
-        stock: Number(p.stock) || 0,
+      const sanitized: Producto[] = prods.map(p => ({
+        id: String(p.id || p._id || ''),
+        nombre: String(p.nombre || p.name || 'Sin Nombre'),
+        codigo_barras: String(p.codigo_barras || p.barcode || ''),
+        precio_usd: Number(p.precio_usd !== undefined ? p.precio_usd : (p.price !== undefined ? p.price : 0)) || 0,
+        costo_usd: Number(p.costo_usd !== undefined ? p.costo_usd : (p.cost !== undefined ? p.cost : 0)) || 0,
+        stock: Number(p.stock !== undefined ? p.stock : 0) || 0,
+        categoria: String(p.categoria || p.category || 'Sin Categoría'),
+        unidad_medida: String(p.unidad_medida || 'unid') as 'unid' | 'kg',
+        imagen_url: String(p.imagen_url || p.image || '')
       }));
+
       try {
         localStorage.setItem('bibi_store_cached_productos', JSON.stringify(sanitized));
       } catch {}

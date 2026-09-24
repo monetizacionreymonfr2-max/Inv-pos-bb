@@ -1,4 +1,5 @@
 const express = require('express');
+const fs = require('fs');
 const path = require('path');
 const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
@@ -22,6 +23,76 @@ app.use((req, res, next) => {
 });
 
 let db;
+const PRODUCTS_JSON_FILE = path.join(__dirname, 'bibi_store_productos_completos.json');
+
+// Helper to normalize product format
+function normalizeProductForClient(p) {
+  return {
+    id: String(p.id || p._id || `prod_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`),
+    nombre: String(p.nombre || p.name || 'Sin Nombre'),
+    codigo_barras: String(p.codigo_barras || p.barcode || ''),
+    precio_usd: Number(p.precio_usd !== undefined ? p.precio_usd : (p.price !== undefined ? p.price : 0)) || 0,
+    costo_usd: Number(p.costo_usd !== undefined ? p.costo_usd : (p.cost !== undefined ? p.cost : 0)) || 0,
+    stock: Number(p.stock !== undefined ? p.stock : 0) || 0,
+    categoria: String(p.categoria || p.category || 'Sin Categoría'),
+    unidad_medida: String(p.unidad_medida || 'unid'),
+    imagen_url: String(p.imagen_url || p.image || '')
+  };
+}
+
+// Get stored products prioritizing bibi_store_productos_completos.json on VPS
+async function getStoredProducts() {
+  try {
+    if (fs.existsSync(PRODUCTS_JSON_FILE)) {
+      const content = fs.readFileSync(PRODUCTS_JSON_FILE, 'utf8');
+      const parsed = JSON.parse(content);
+      let prods = [];
+      if (Array.isArray(parsed)) {
+        prods = parsed;
+      } else if (parsed && Array.isArray(parsed.productos)) {
+        prods = parsed.productos;
+      } else if (parsed && Array.isArray(parsed.products)) {
+        prods = parsed.products;
+      }
+      if (prods.length > 0) {
+        return prods.map(p => normalizeProductForClient(p)).sort((a, b) => a.nombre.localeCompare(b.nombre));
+      }
+    }
+  } catch (e) {
+    console.error('Error reading bibi_store_productos_completos.json:', e);
+  }
+
+  // Fallback to SQLite
+  try {
+    if (db) {
+      const rows = await db.all('SELECT * FROM products ORDER BY name ASC');
+      return rows.map(r => ({
+        id: r.id,
+        nombre: r.name || '',
+        codigo_barras: r.barcode || '',
+        precio_usd: Number(r.price) || 0,
+        costo_usd: Number(r.cost) || 0,
+        stock: Number(r.stock) || 0,
+        categoria: r.category || 'Sin Categoría',
+        unidad_medida: r.unidad_medida || 'unid',
+        imagen_url: r.imagen_url || ''
+      }));
+    }
+  } catch (e) {
+    console.error('Error reading from SQLite:', e);
+  }
+
+  return [];
+}
+
+async function saveStoredProducts(products) {
+  try {
+    const normalized = products.map(p => normalizeProductForClient(p));
+    fs.writeFileSync(PRODUCTS_JSON_FILE, JSON.stringify(normalized, null, 2), 'utf8');
+  } catch (e) {
+    console.error('Error writing bibi_store_productos_completos.json:', e);
+  }
+}
 
 async function initDb() {
   try {
@@ -65,6 +136,31 @@ async function initDb() {
         data TEXT
       );
     `);
+
+    // Sync SQLite with bibi_store_productos_completos.json if json exists
+    const currentProds = await getStoredProducts();
+    if (currentProds.length > 0) {
+      await db.run('BEGIN TRANSACTION');
+      for (const p of currentProds) {
+        await db.run(
+          `INSERT INTO products (id, name, barcode, price, cost, stock, category, unidad_medida, imagen_url) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) 
+           ON CONFLICT(id) DO UPDATE SET 
+             name=excluded.name, 
+             barcode=excluded.barcode, 
+             price=excluded.price, 
+             cost=excluded.cost, 
+             stock=excluded.stock, 
+             category=excluded.category,
+             unidad_medida=excluded.unidad_medida,
+             imagen_url=excluded.imagen_url`,
+          [p.id, p.nombre, p.codigo_barras, p.precio_usd, p.costo_usd, p.stock, p.categoria, p.unidad_medida, p.imagen_url]
+        );
+      }
+      await db.run('COMMIT');
+      console.log(`[SQLite] Sincronizados ${currentProds.length} productos desde bibi_store_productos_completos.json`);
+    }
+
     console.log('[SQLite] Base de datos conectada en:', path.join(__dirname, 'database.sqlite'));
   } catch (err) {
     console.error('[SQLite] Error inicializando base de datos:', err);
@@ -76,11 +172,11 @@ initDb();
 // 1. Health / Status
 app.get('/api/health', async (req, res) => {
   try {
-    const countRow = await db.get('SELECT COUNT(*) as count FROM products');
+    const products = await getStoredProducts();
     res.json({
       status: 'online',
-      server: 'Bibi Store VPS SQLite REST API',
-      totalProductos: countRow ? countRow.count : 0,
+      server: 'Bibi Store VPS SQLite + JSON REST API',
+      totalProductos: products.length,
       timestamp: new Date().toISOString()
     });
   } catch (err) {
@@ -90,11 +186,11 @@ app.get('/api/health', async (req, res) => {
 
 app.get('/api/vps/status', async (req, res) => {
   try {
-    const countRow = await db.get('SELECT COUNT(*) as count FROM products');
+    const products = await getStoredProducts();
     res.json({
       status: 'online',
-      mode: 'autonomous_vps_sqlite',
-      totalProductos: countRow ? countRow.count : 0,
+      mode: 'autonomous_vps_sqlite_json',
+      totalProductos: products.length,
       timestamp: new Date().toISOString()
     });
   } catch (err) {
@@ -102,21 +198,19 @@ app.get('/api/vps/status', async (req, res) => {
   }
 });
 
-// 2. Products CRUD (Ordered by name ASC)
+// 2. Products CRUD (GET /api/products, GET /api/productos, etc.)
 app.get('/api/products', async (req, res) => {
   try {
-    const rows = await db.all('SELECT * FROM products ORDER BY name ASC');
-    const products = rows.map(r => ({
-      id: r.id,
-      nombre: r.name || '',
-      codigo_barras: r.barcode || '',
-      precio_usd: Number(r.price) || 0,
-      costo_usd: Number(r.cost) || 0,
-      stock: Number(r.stock) || 0,
-      categoria: r.category || 'Sin Categoría',
-      unidad_medida: r.unidad_medida || 'unid',
-      imagen_url: r.imagen_url || ''
-    }));
+    const products = await getStoredProducts();
+    res.json(products);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/productos', async (req, res) => {
+  try {
+    const products = await getStoredProducts();
     res.json(products);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -125,18 +219,7 @@ app.get('/api/products', async (req, res) => {
 
 app.get('/api/vps/productos', async (req, res) => {
   try {
-    const rows = await db.all('SELECT * FROM products ORDER BY name ASC');
-    const products = rows.map(r => ({
-      id: r.id,
-      nombre: r.name || '',
-      codigo_barras: r.barcode || '',
-      precio_usd: Number(r.price) || 0,
-      costo_usd: Number(r.cost) || 0,
-      stock: Number(r.stock) || 0,
-      categoria: r.category || 'Sin Categoría',
-      unidad_medida: r.unidad_medida || 'unid',
-      imagen_url: r.imagen_url || ''
-    }));
+    const products = await getStoredProducts();
     res.json(products);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -151,14 +234,7 @@ app.post('/api/products', async (req, res) => {
       return res.status(400).json({ error: 'Nombre es requerido' });
     }
 
-    const id = String(p.id || `prod_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`);
-    const barcode = String(p.barcode !== undefined && p.barcode !== null ? p.barcode : (p.codigo_barras !== undefined && p.codigo_barras !== null ? p.codigo_barras : '')) || '';
-    const price = Number(p.price !== undefined ? p.price : (p.precio_usd !== undefined ? p.precio_usd : 0)) || 0;
-    const cost = Number(p.cost !== undefined ? p.cost : (p.costo_usd !== undefined ? p.costo_usd : 0)) || 0;
-    const stock = Number(p.stock !== undefined ? p.stock : 0) || 0;
-    const category = String(p.category !== undefined && p.category !== null && p.category !== '' ? p.category : (p.categoria !== undefined && p.categoria !== null && p.categoria !== '' ? p.categoria : 'Sin Categoría')) || 'Sin Categoría';
-    const unidad_medida = String(p.unidad_medida || 'unid');
-    const imagen_url = String(p.imagen_url || '');
+    const normalized = normalizeProductForClient(p);
 
     await db.run(
       `INSERT INTO products (id, name, barcode, price, cost, stock, category, unidad_medida, imagen_url) 
@@ -172,22 +248,48 @@ app.post('/api/products', async (req, res) => {
          category=excluded.category,
          unidad_medida=excluded.unidad_medida,
          imagen_url=excluded.imagen_url`,
-      [id, name, barcode, price, cost, stock, category, unidad_medida, imagen_url]
+      [normalized.id, normalized.nombre, normalized.codigo_barras, normalized.precio_usd, normalized.costo_usd, normalized.stock, normalized.categoria, normalized.unidad_medida, normalized.imagen_url]
     );
 
-    const producto = {
-      id,
-      nombre: name,
-      codigo_barras: barcode,
-      precio_usd: price,
-      costo_usd: cost,
-      stock,
-      categoria: category,
-      unidad_medida,
-      imagen_url
-    };
+    const allProducts = await getStoredProducts();
+    const existingIdx = allProducts.findIndex(item => item.id === normalized.id);
+    if (existingIdx >= 0) {
+      allProducts[existingIdx] = normalized;
+    } else {
+      allProducts.unshift(normalized);
+    }
+    await saveStoredProducts(allProducts);
 
-    res.status(201).json({ success: true, producto });
+    res.status(201).json({ success: true, producto: normalized });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/productos', async (req, res) => {
+  try {
+    const p = req.body;
+    const normalized = normalizeProductForClient(p);
+
+    await db.run(
+      `INSERT INTO products (id, name, barcode, price, cost, stock, category, unidad_medida, imagen_url) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) 
+       ON CONFLICT(id) DO UPDATE SET 
+         name=excluded.name, 
+         barcode=excluded.barcode, 
+         price=excluded.price, 
+         cost=excluded.cost, 
+         stock=excluded.stock, 
+         category=excluded.category,
+         unidad_medida=excluded.unidad_medida,
+         imagen_url=excluded.imagen_url`,
+      [normalized.id, normalized.nombre, normalized.codigo_barras, normalized.precio_usd, normalized.costo_usd, normalized.stock, normalized.categoria, normalized.unidad_medida, normalized.imagen_url]
+    );
+
+    const allProducts = await getStoredProducts();
+    await saveStoredProducts(allProducts);
+
+    res.json({ success: true, producto: normalized });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -196,15 +298,7 @@ app.post('/api/products', async (req, res) => {
 app.post('/api/vps/productos', async (req, res) => {
   try {
     const p = req.body;
-    const id = String(p.id || `prod_${Date.now()}`);
-    const name = String(p.name !== undefined && p.name !== null && p.name !== '' ? p.name : (p.nombre !== undefined && p.nombre !== null && p.nombre !== '' ? p.nombre : 'Producto'));
-    const barcode = String(p.barcode !== undefined && p.barcode !== null ? p.barcode : (p.codigo_barras !== undefined && p.codigo_barras !== null ? p.codigo_barras : ''));
-    const price = Number(p.price !== undefined ? p.price : (p.precio_usd !== undefined ? p.precio_usd : 0));
-    const cost = Number(p.cost !== undefined ? p.cost : (p.costo_usd !== undefined ? p.costo_usd : 0));
-    const stock = Number(p.stock !== undefined ? p.stock : 0);
-    const category = String(p.category !== undefined && p.category !== null && p.category !== '' ? p.category : (p.categoria !== undefined && p.categoria !== null && p.categoria !== '' ? p.categoria : 'Sin Categoría'));
-    const unidad_medida = String(p.unidad_medida || 'unid');
-    const imagen_url = String(p.imagen_url || '');
+    const normalized = normalizeProductForClient(p);
 
     await db.run(
       `INSERT INTO products (id, name, barcode, price, cost, stock, category, unidad_medida, imagen_url) 
@@ -218,10 +312,13 @@ app.post('/api/vps/productos', async (req, res) => {
          category=excluded.category,
          unidad_medida=excluded.unidad_medida,
          imagen_url=excluded.imagen_url`,
-      [id, name, barcode, price, cost, stock, category, unidad_medida, imagen_url]
+      [normalized.id, normalized.nombre, normalized.codigo_barras, normalized.precio_usd, normalized.costo_usd, normalized.stock, normalized.categoria, normalized.unidad_medida, normalized.imagen_url]
     );
 
-    res.json({ success: true, producto: { id, nombre: name, codigo_barras: barcode, precio_usd: price, costo_usd: cost, stock, categoria: category, unidad_medida, imagen_url } });
+    const allProducts = await getStoredProducts();
+    await saveStoredProducts(allProducts);
+
+    res.json({ success: true, producto: normalized });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -237,24 +334,17 @@ app.put('/api/products/:id', async (req, res) => {
       return res.status(404).json({ error: 'Producto no encontrado' });
     }
 
-    const name = String(p.name !== undefined && p.name !== null && p.name !== '' ? p.name : (p.nombre !== undefined && p.nombre !== null && p.nombre !== '' ? p.nombre : existing.name));
-    const barcode = String(p.barcode !== undefined && p.barcode !== null ? p.barcode : (p.codigo_barras !== undefined && p.codigo_barras !== null ? p.codigo_barras : existing.barcode));
-    const price = Number(p.price !== undefined ? p.price : (p.precio_usd !== undefined ? p.precio_usd : existing.price));
-    const cost = Number(p.cost !== undefined ? p.cost : (p.costo_usd !== undefined ? p.costo_usd : existing.cost));
-    const stock = Number(p.stock !== undefined ? p.stock : existing.stock);
-    const category = String(p.category !== undefined && p.category !== null && p.category !== '' ? p.category : (p.categoria !== undefined && p.categoria !== null && p.categoria !== '' ? p.categoria : existing.category));
-    const unidad_medida = String(p.unidad_medida || existing.unidad_medida || 'unid');
-    const imagen_url = String(p.imagen_url !== undefined && p.imagen_url !== null ? p.imagen_url : (existing.imagen_url || ''));
+    const normalized = normalizeProductForClient({ ...existing, ...p, id });
 
     await db.run(
       `UPDATE products SET name = ?, barcode = ?, price = ?, cost = ?, stock = ?, category = ?, unidad_medida = ?, imagen_url = ? WHERE id = ?`,
-      [name, barcode, price, cost, stock, category, unidad_medida, imagen_url, id]
+      [normalized.nombre, normalized.codigo_barras, normalized.precio_usd, normalized.costo_usd, normalized.stock, normalized.categoria, normalized.unidad_medida, normalized.imagen_url, id]
     );
 
-    res.json({
-      success: true,
-      producto: { id, nombre: name, codigo_barras: barcode, precio_usd: price, costo_usd: cost, stock, categoria: category, unidad_medida, imagen_url }
-    });
+    const allProducts = await getStoredProducts();
+    await saveStoredProducts(allProducts);
+
+    res.json({ success: true, producto: normalized });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -263,8 +353,10 @@ app.put('/api/products/:id', async (req, res) => {
 app.delete('/api/products/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const result = await db.run('DELETE FROM products WHERE id = ?', [id]);
-    res.json({ success: true, deleted: result.changes || 1 });
+    await db.run('DELETE FROM products WHERE id = ?', [id]);
+    const allProducts = (await getStoredProducts()).filter(p => p.id !== id);
+    await saveStoredProducts(allProducts);
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -274,13 +366,15 @@ app.delete('/api/vps/productos/:id', async (req, res) => {
   try {
     const { id } = req.params;
     await db.run('DELETE FROM products WHERE id = ?', [id]);
+    const allProducts = (await getStoredProducts()).filter(p => p.id !== id);
+    await saveStoredProducts(allProducts);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// POST /api/products/bulk -> Bulk synchronization with BEGIN TRANSACTION, COMMIT, ROLLBACK, ON CONFLICT, and default values
+// POST /api/products/bulk -> Bulk synchronization with BEGIN TRANSACTION, COMMIT, ROLLBACK, ON CONFLICT, and bibi_store_productos_completos.json persistence
 app.post('/api/products/bulk', async (req, res) => {
   try {
     let prods = [];
@@ -307,26 +401,25 @@ app.post('/api/products/bulk', async (req, res) => {
       return res.status(400).json({ error: 'Se esperaba un array o formato válido de productos' });
     }
 
+    const sanitized = prods.map((p, idx) => normalizeProductForClient(p, idx));
+
     await db.run('BEGIN TRANSACTION');
 
     try {
-      for (let i = 0; i < prods.length; i++) {
-        const p = prods[i];
-        if (!p || typeof p !== 'object') continue;
-
-        const id = String(p.id || p._id || `prod_${Date.now()}_${i}_${Math.random().toString(36).substring(2, 5)}`);
-        const name = String(p.name !== undefined && p.name !== null && p.name !== '' ? p.name : (p.nombre !== undefined && p.nombre !== null && p.nombre !== '' ? p.nombre : `Producto ${i + 1}`));
-        const barcode = String(p.barcode !== undefined && p.barcode !== null ? p.barcode : (p.codigo_barras !== undefined && p.codigo_barras !== null ? p.codigo_barras : ''));
-        const price = Number(p.price !== undefined ? p.price : (p.precio_usd !== undefined ? p.precio_usd : (p.precio !== undefined ? p.precio : 0))) || 0;
-        const cost = Number(p.cost !== undefined ? p.cost : (p.costo_usd !== undefined ? p.costo_usd : (p.costo !== undefined ? p.costo : 0))) || 0;
-        const stock = Number(p.stock !== undefined ? p.stock : (p.existencia !== undefined ? p.existencia : (p.cantidad !== undefined ? p.cantidad : 0))) || 0;
-        const category = String(p.category !== undefined && p.category !== null && p.category !== '' ? p.category : (p.categoria !== undefined && p.categoria !== null && p.categoria !== '' ? p.categoria : 'Sin Categoría'));
-        const unidad_medida = String(p.unidad_medida || p.unidad || 'unid');
-        const imagen_url = String(p.imagen_url || p.image || p.imagen || '');
-
+      for (const p of sanitized) {
         await db.run(
-          `INSERT INTO products (id, name, barcode, price, cost, stock, category) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, barcode=excluded.barcode, price=excluded.price, cost=excluded.cost, stock=excluded.stock, category=excluded.category`,
-          [id, name, barcode, price, cost, stock, category]
+          `INSERT INTO products (id, name, barcode, price, cost, stock, category, unidad_medida, imagen_url) 
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) 
+           ON CONFLICT(id) DO UPDATE SET 
+             name=excluded.name, 
+             barcode=excluded.barcode, 
+             price=excluded.price, 
+             cost=excluded.cost, 
+             stock=excluded.stock, 
+             category=excluded.category,
+             unidad_medida=excluded.unidad_medida,
+             imagen_url=excluded.imagen_url`,
+          [p.id, p.nombre, p.codigo_barras, p.precio_usd, p.costo_usd, p.stock, p.categoria, p.unidad_medida, p.imagen_url]
         );
       }
 
@@ -336,14 +429,15 @@ app.post('/api/products/bulk', async (req, res) => {
       throw txErr;
     }
 
-    const countRow = await db.get('SELECT COUNT(*) as count FROM products');
-    const totalProductos = countRow ? countRow.count : prods.length;
+    // Persist to bibi_store_productos_completos.json
+    const finalProducts = await getStoredProducts();
+    await saveStoredProducts(finalProducts);
 
-    console.log(`[BULK UPLOAD] ${prods.length} productos sincronizados. Total en BD: ${totalProductos}`);
+    console.log(`[BULK UPLOAD] ${sanitized.length} productos sincronizados. Total en JSON/DB: ${finalProducts.length}`);
     res.json({
       success: true,
-      totalProductos,
-      message: `${totalProductos} productos sincronizados en el servidor`
+      totalProductos: finalProducts.length,
+      message: `${finalProducts.length} productos sincronizados en el servidor y guardados en bibi_store_productos_completos.json`
     });
   } catch (err) {
     console.error('Error in bulk upload:', err);
@@ -602,19 +696,12 @@ app.post('/api/vps/migracion-completa', async (req, res) => {
       if (productos && Array.isArray(productos)) {
         for (let i = 0; i < productos.length; i++) {
           const p = productos[i];
-          const id = String(p.id || `prod_${Date.now()}_${i}`);
-          const name = String(p.name || p.nombre || `Producto ${i + 1}`);
-          const barcode = String(p.barcode || p.codigo_barras || '');
-          const price = Number(p.price !== undefined ? p.price : (p.precio_usd || 0));
-          const cost = Number(p.cost !== undefined ? p.cost : (p.costo_usd || 0));
-          const stock = Number(p.stock !== undefined ? p.stock : 0);
-          const category = String(p.category || p.categoria || 'Sin Categoría');
-          const unidad_medida = String(p.unidad_medida || 'unid');
-          const imagen_url = String(p.imagen_url || '');
-
+          const normalized = normalizeProductForClient(p, i);
           await db.run(
-            `INSERT INTO products (id, name, barcode, price, cost, stock, category) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, barcode=excluded.barcode, price=excluded.price, cost=excluded.cost, stock=excluded.stock, category=excluded.category`,
-            [id, name, barcode, price, cost, stock, category]
+            `INSERT INTO products (id, name, barcode, price, cost, stock, category, unidad_medida, imagen_url) 
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) 
+             ON CONFLICT(id) DO UPDATE SET name=excluded.name, barcode=excluded.barcode, price=excluded.price, cost=excluded.cost, stock=excluded.stock, category=excluded.category, unidad_medida=excluded.unidad_medida, imagen_url=excluded.imagen_url`,
+            [normalized.id, normalized.nombre, normalized.codigo_barras, normalized.precio_usd, normalized.costo_usd, normalized.stock, normalized.categoria, normalized.unidad_medida, normalized.imagen_url]
           );
         }
       }
@@ -652,11 +739,13 @@ app.post('/api/vps/migracion-completa', async (req, res) => {
       throw migErr;
     }
 
-    const countRow = await db.get('SELECT COUNT(*) as count FROM products');
+    const allProducts = await getStoredProducts();
+    await saveStoredProducts(allProducts);
+
     res.json({
       success: true,
-      mensaje: 'Migración completada exitosamente en la VPS con SQLite',
-      totalProductos: countRow ? countRow.count : 0
+      mensaje: 'Migración completada exitosamente en la VPS con SQLite y bibi_store_productos_completos.json',
+      totalProductos: allProducts.length
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -664,5 +753,5 @@ app.post('/api/vps/migracion-completa', async (req, res) => {
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[BIBI STORE VPS SQLite API] Corriendo en http://0.0.0.0:${PORT}`);
+  console.log(`[BIBI STORE VPS SQLite+JSON API] Corriendo en http://0.0.0.0:${PORT}`);
 });
