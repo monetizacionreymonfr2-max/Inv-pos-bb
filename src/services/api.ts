@@ -1,6 +1,6 @@
 import { Producto, Venta, Fiado, Config } from '../types';
 
-export const DEFAULT_API_URL = 'http://143.198.163.70:3000/api';
+export const DEFAULT_API_URL = '/api';
 
 export function getApiBaseUrl(): string {
   if (typeof window !== 'undefined') {
