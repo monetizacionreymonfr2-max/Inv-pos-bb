@@ -40,17 +40,11 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     ...(options.headers || {}),
   };
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 12000);
-
   try {
     const res = await fetch(url, {
       ...options,
       headers,
-      signal: controller.signal,
     });
-
-    clearTimeout(timeoutId);
 
     if (!res.ok) {
       const errorBody = await res.json().catch(() => ({}));
@@ -59,7 +53,6 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
     return await res.json();
   } catch (err: any) {
-    clearTimeout(timeoutId);
     console.warn(`[API REST] Fallo en ${options.method || 'GET'} ${url}:`, err.message || err);
     throw err;
   }

@@ -10,6 +10,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { exportarProductosJSON, descargarJSON } from '../lib/exportProductos';
 import { getProducts, createProduct, updateProduct, deleteProduct, bulkUploadProducts } from '../services/api';
+import { migrarTodoAVPS } from '../lib/vpsService';
 
 export default function Inventario() {
   const { role } = useAuth();
@@ -172,7 +173,7 @@ export default function Inventario() {
     }
   };
 
-  // Sincronizar catálogo masivamente con el nuevo servidor VPS (POST /api/products/bulk)
+  // Sincronizar catálogo masivamente con el nuevo servidor VPS por lotes
   const handleSincronizarConServidor = async () => {
     if (productos.length === 0) {
       toast.error("No hay productos cargados en memoria para sincronizar.");
@@ -180,18 +181,26 @@ export default function Inventario() {
     }
 
     setSincronizando(true);
-    const toastId = toast.loading(`Enviando ${productos.length} productos a la API del servidor VPS...`);
+    const toastId = toast.loading(`Preparando sincronización por lotes con el servidor VPS...`);
     try {
-      const res = await bulkUploadProducts(productos);
-      toast.success(`🚀 ${res.totalProductos || productos.length} productos sincronizados exitosamente con el servidor VPS!`, {
+      const res = await migrarTodoAVPS(
+        {
+          productos: productos,
+          config: { tasa_dolar: tasaDolar || 50 }
+        },
+        (msg) => {
+          toast.loading(msg, { id: toastId });
+        }
+      );
+      toast.success(`🚀 ¡Sincronización perfecta! ${res.totalProductos || productos.length} productos guardados en la VPS de DigitalOcean.`, {
         id: toastId,
-        duration: 5000
+        duration: 6000
       });
     } catch (err: any) {
       console.error("Error sincronizando catálogo:", err);
       toast.error(err.message || "Error al sincronizar con el servidor. Verifica que el backend esté activo.", {
         id: toastId,
-        duration: 5000
+        duration: 6000
       });
     } finally {
       setSincronizando(false);
