@@ -58,6 +58,88 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
   }
 }
 
+interface OfflineAction {
+  id: string;
+  type: 'CREATE_PRODUCT' | 'UPDATE_PRODUCT' | 'DELETE_PRODUCT' | 'BULK_PRODUCTS';
+  payload: any;
+  timestamp: number;
+}
+
+function getOfflineQueue(): OfflineAction[] {
+  try {
+    const cached = localStorage.getItem('bibi_store_offline_queue');
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch {}
+  return [];
+}
+
+function saveOfflineQueue(queue: OfflineAction[]) {
+  try {
+    localStorage.setItem('bibi_store_offline_queue', JSON.stringify(queue));
+  } catch {}
+}
+
+function enqueueOfflineAction(type: OfflineAction['type'], payload: any) {
+  const queue = getOfflineQueue();
+  queue.push({
+    id: `offline_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    type,
+    payload,
+    timestamp: Date.now()
+  });
+  saveOfflineQueue(queue);
+}
+
+export async function processOfflineQueue() {
+  const queue = getOfflineQueue();
+  if (queue.length === 0) return;
+
+  const remaining: OfflineAction[] = [];
+  for (const action of queue) {
+    try {
+      if (action.type === 'CREATE_PRODUCT') {
+        await request('/products', {
+          method: 'POST',
+          body: JSON.stringify(action.payload),
+        });
+      } else if (action.type === 'UPDATE_PRODUCT') {
+        await request(`/products/${encodeURIComponent(action.payload.id)}`, {
+          method: 'PUT',
+          body: JSON.stringify(action.payload.data),
+        });
+      } else if (action.type === 'DELETE_PRODUCT') {
+        await request(`/products/${encodeURIComponent(action.payload.id)}`, {
+          method: 'DELETE',
+        });
+      } else if (action.type === 'BULK_PRODUCTS') {
+        await request('/products/bulk', {
+          method: 'POST',
+          body: JSON.stringify(action.payload),
+        });
+      }
+    } catch (err) {
+      remaining.push(action);
+    }
+  }
+
+  saveOfflineQueue(remaining);
+  if (remaining.length < queue.length) {
+    console.log("[Sync] Cola offline sincronizada exitosamente con el servidor VPS.");
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    processOfflineQueue();
+  });
+  setTimeout(() => {
+    processOfflineQueue();
+  }, 2000);
+}
+
 // --------------------------------------------------------
 // PRODUCTOS ENDPOINTS
 // --------------------------------------------------------
@@ -67,12 +149,21 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
  */
 export async function getProducts(): Promise<Producto[]> {
   try {
-    const data = await request<Producto[]>('/products', { method: 'GET' });
+    const data = await request<any>('/products', { method: 'GET' });
+    let prods: Producto[] = [];
     if (Array.isArray(data)) {
+      prods = data;
+    } else if (data && Array.isArray(data.products)) {
+      prods = data.products;
+    } else if (data && Array.isArray(data.productos)) {
+      prods = data.productos;
+    }
+
+    if (prods.length > 0) {
       try {
-        localStorage.setItem('bibi_store_cached_productos', JSON.stringify(data));
+        localStorage.setItem('bibi_store_cached_productos', JSON.stringify(prods));
       } catch {}
-      return data;
+      return prods;
     }
   } catch (err) {
     console.warn('Usando cache local de productos por error en servidor:', err);
@@ -93,14 +184,12 @@ export async function getProducts(): Promise<Producto[]> {
  * POST /api/products -> Crear nuevo producto
  */
 export async function createProduct(prod: Partial<Producto> & { costo_usd?: number }): Promise<Producto> {
-  const response = await request<{ success: boolean; producto: Producto }>('/products', {
-    method: 'POST',
-    body: JSON.stringify(prod),
-  });
+  const created = {
+    ...prod,
+    id: prod.id || `prod_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+  } as Producto;
 
-  const created = response.producto || (prod as Producto);
-
-  // Actualizar cache local
+  // 1. Guardar inmediatamente en localStorage (Memoria del navegador del celular)
   try {
     const cached = localStorage.getItem('bibi_store_cached_productos');
     let prods: Producto[] = [];
@@ -114,6 +203,20 @@ export async function createProduct(prod: Partial<Producto> & { costo_usd?: numb
     localStorage.setItem('bibi_store_cached_productos', JSON.stringify(updated));
   } catch {}
 
+  // 2. Intentar guardar en servidor VPS. Si falla, encolar para sincronización automática
+  try {
+    const response = await request<{ success: boolean; producto: Producto }>('/products', {
+      method: 'POST',
+      body: JSON.stringify(created),
+    });
+    if (response && response.producto) {
+      return response.producto;
+    }
+  } catch (err) {
+    console.warn("Sin conexión con el servidor. Producto guardado localmente y encolado para sincronización automática:", err);
+    enqueueOfflineAction('CREATE_PRODUCT', created);
+  }
+
   return created;
 }
 
@@ -121,14 +224,9 @@ export async function createProduct(prod: Partial<Producto> & { costo_usd?: numb
  * PUT /api/products/:id -> Actualizar producto existente
  */
 export async function updateProduct(id: string, prod: Partial<Producto> & { costo_usd?: number }): Promise<Producto> {
-  const response = await request<{ success: boolean; producto: Producto }>(`/products/${encodeURIComponent(id)}`, {
-    method: 'PUT',
-    body: JSON.stringify(prod),
-  });
+  const updatedData = { ...prod, id } as Producto;
 
-  const updated = response.producto || ({ ...prod, id } as Producto);
-
-  // Actualizar cache local
+  // 1. Actualizar caché local inmediatamente
   try {
     const cached = localStorage.getItem('bibi_store_cached_productos');
     if (cached) {
@@ -136,31 +234,37 @@ export async function updateProduct(id: string, prod: Partial<Producto> & { cost
         const parsed = JSON.parse(cached);
         const prods: Producto[] = Array.isArray(parsed) ? parsed : [];
         const idx = prods.findIndex(p => p && p.id === id);
-        if (idx >= 0) prods[idx] = { ...prods[idx], ...updated };
-        else prods.unshift(updated);
+        if (idx >= 0) prods[idx] = { ...prods[idx], ...updatedData };
+        else prods.unshift(updatedData);
         localStorage.setItem('bibi_store_cached_productos', JSON.stringify(prods));
       } catch {}
     } else {
-      localStorage.setItem('bibi_store_cached_productos', JSON.stringify([updated]));
+      localStorage.setItem('bibi_store_cached_productos', JSON.stringify([updatedData]));
     }
   } catch {}
 
-  return updated;
+  // 2. Intentar actualizar en servidor
+  try {
+    const response = await request<{ success: boolean; producto: Producto }>(`/products/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(prod),
+    });
+    if (response && response.producto) {
+      return response.producto;
+    }
+  } catch (err) {
+    console.warn("Sin conexión con el servidor. Actualización guardada localmente y encolada:", err);
+    enqueueOfflineAction('UPDATE_PRODUCT', { id, data: prod });
+  }
+
+  return updatedData;
 }
 
 /**
  * DELETE /api/products/:id -> Eliminar producto
  */
 export async function deleteProduct(id: string): Promise<boolean> {
-  try {
-    await request<{ success: boolean }>(`/products/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-    });
-  } catch (err) {
-    console.warn("Aviso al eliminar producto en servidor:", err);
-  }
-
-  // Actualizar cache local
+  // 1. Actualizar caché local inmediatamente
   try {
     const cached = localStorage.getItem('bibi_store_cached_productos');
     if (cached) {
@@ -173,6 +277,16 @@ export async function deleteProduct(id: string): Promise<boolean> {
     }
   } catch {}
 
+  // 2. Intentar eliminar en servidor
+  try {
+    await request<{ success: boolean }>(`/products/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    });
+  } catch (err) {
+    console.warn("Sin conexión con el servidor. Eliminación encolada para sincronización:", err);
+    enqueueOfflineAction('DELETE_PRODUCT', { id });
+  }
+
   return true;
 }
 
@@ -184,23 +298,47 @@ export async function bulkUploadProducts(productos: any[], append: boolean = fal
   totalProductos: number;
   message?: string;
 }> {
-  if (!append) {
-    // Guardar inmediatamente en localStorage solo en el primer lote
-    try {
-      localStorage.setItem('bibi_store_cached_productos', JSON.stringify(productos));
-    } catch (e) {
-      console.warn("No se pudo cachear en localStorage por tamaño:", e);
+  // 1. Guardar inmediatamente en localStorage
+  try {
+    let prodsToSave = productos;
+    if (append) {
+      const cached = localStorage.getItem('bibi_store_cached_productos');
+      let existing: Producto[] = [];
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed)) existing = parsed;
+        } catch {}
+      }
+      const map = new Map();
+      existing.forEach(p => map.set(p.id, p));
+      productos.forEach(p => map.set(p.id, { ...(map.get(p.id) || {}), ...p }));
+      prodsToSave = Array.from(map.values());
     }
+    localStorage.setItem('bibi_store_cached_productos', JSON.stringify(prodsToSave));
+  } catch (e) {
+    console.warn("No se pudo cachear en localStorage por tamaño:", e);
   }
 
-  return await request<{
-    success: boolean;
-    totalProductos: number;
-    message?: string;
-  }>('/products/bulk', {
-    method: 'POST',
-    body: JSON.stringify({ products: productos, append }),
-  });
+  // 2. Intentar enviar al servidor VPS
+  try {
+    return await request<{
+      success: boolean;
+      totalProductos: number;
+      message?: string;
+    }>('/products/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ products: productos, append }),
+    });
+  } catch (err) {
+    console.warn("Sin conexión con el servidor. Carga masiva guardada en navegador y encolada:", err);
+    enqueueOfflineAction('BULK_PRODUCTS', { products: productos, append });
+    return {
+      success: true,
+      totalProductos: productos.length,
+      message: "Guardado en la memoria del navegador. Se sincronizará con el servidor al conectar a internet."
+    };
+  }
 }
 
 // --------------------------------------------------------
