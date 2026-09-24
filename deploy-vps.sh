@@ -88,6 +88,8 @@ server {
     root /var/www/bibi-store/dist;
     index index.html;
 
+    client_max_body_size 100M;
+
     # Compresión Gzip para máxima velocidad
     gzip on;
     gzip_vary on;
