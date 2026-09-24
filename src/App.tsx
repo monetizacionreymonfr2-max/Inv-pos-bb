@@ -8,6 +8,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { ConfigProvider } from './contexts/ConfigContext';
 import { Toaster } from 'react-hot-toast';
+import ErrorBoundary from './components/ErrorBoundary';
 import Layout from './components/Layout';
 import Vender from './pages/Vender';
 import Inventario from './pages/Inventario';
@@ -27,25 +28,27 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <ConfigProvider>
-        <Toaster position="top-right" />
-        <BrowserRouter>
-          <Routes>
-            <Route path="/tienda" element={<TiendaPublica />} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/" element={<RequireAuth><Layout /></RequireAuth>}>
-              <Route index element={<Vender />} />
-              <Route path="inventario" element={<Inventario />} />
-              <Route path="fiados" element={<Fiados />} />
-              <Route path="stats" element={<Estadisticas />} />
-              <Route path="ajustes" element={<Ajustes />} />
-              <Route path="panel-creador" element={<PanelCreador />} />
-            </Route>
-          </Routes>
-        </BrowserRouter>
-      </ConfigProvider>
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <ConfigProvider>
+          <Toaster position="top-right" />
+          <BrowserRouter>
+            <Routes>
+              <Route path="/tienda" element={<TiendaPublica />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/" element={<RequireAuth><Layout /></RequireAuth>}>
+                <Route index element={<Vender />} />
+                <Route path="inventario" element={<Inventario />} />
+                <Route path="fiados" element={<Fiados />} />
+                <Route path="stats" element={<Estadisticas />} />
+                <Route path="ajustes" element={<Ajustes />} />
+                <Route path="panel-creador" element={<PanelCreador />} />
+              </Route>
+            </Routes>
+          </BrowserRouter>
+        </ConfigProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 

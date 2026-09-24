@@ -81,7 +81,10 @@ export async function getProducts(): Promise<Producto[]> {
   // Fallback a almacenamiento local en caso de desconexión
   try {
     const cached = localStorage.getItem('bibi_store_cached_productos');
-    if (cached) return JSON.parse(cached);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed)) return parsed;
+    }
   } catch {}
   return [];
 }
@@ -100,8 +103,14 @@ export async function createProduct(prod: Partial<Producto> & { costo_usd?: numb
   // Actualizar cache local
   try {
     const cached = localStorage.getItem('bibi_store_cached_productos');
-    const prods: Producto[] = cached ? JSON.parse(cached) : [];
-    const updated = [created, ...prods.filter(p => p.id !== created.id)];
+    let prods: Producto[] = [];
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) prods = parsed;
+      } catch {}
+    }
+    const updated = [created, ...prods.filter(p => p && p.id !== created.id)];
     localStorage.setItem('bibi_store_cached_productos', JSON.stringify(updated));
   } catch {}
 
@@ -123,11 +132,16 @@ export async function updateProduct(id: string, prod: Partial<Producto> & { cost
   try {
     const cached = localStorage.getItem('bibi_store_cached_productos');
     if (cached) {
-      const prods: Producto[] = JSON.parse(cached);
-      const idx = prods.findIndex(p => p.id === id);
-      if (idx >= 0) prods[idx] = { ...prods[idx], ...updated };
-      else prods.unshift(updated);
-      localStorage.setItem('bibi_store_cached_productos', JSON.stringify(prods));
+      try {
+        const parsed = JSON.parse(cached);
+        const prods: Producto[] = Array.isArray(parsed) ? parsed : [];
+        const idx = prods.findIndex(p => p && p.id === id);
+        if (idx >= 0) prods[idx] = { ...prods[idx], ...updated };
+        else prods.unshift(updated);
+        localStorage.setItem('bibi_store_cached_productos', JSON.stringify(prods));
+      } catch {}
+    } else {
+      localStorage.setItem('bibi_store_cached_productos', JSON.stringify([updated]));
     }
   } catch {}
 
@@ -150,9 +164,12 @@ export async function deleteProduct(id: string): Promise<boolean> {
   try {
     const cached = localStorage.getItem('bibi_store_cached_productos');
     if (cached) {
-      const prods: Producto[] = JSON.parse(cached);
-      const filtered = prods.filter(p => p.id !== id);
-      localStorage.setItem('bibi_store_cached_productos', JSON.stringify(filtered));
+      try {
+        const parsed = JSON.parse(cached);
+        const prods: Producto[] = Array.isArray(parsed) ? parsed : [];
+        const filtered = prods.filter(p => p && p.id !== id);
+        localStorage.setItem('bibi_store_cached_productos', JSON.stringify(filtered));
+      } catch {}
     }
   } catch {}
 
@@ -204,7 +221,13 @@ export async function recordSale(venta: Partial<Venta>): Promise<Venta> {
   // Cachear en historial local
   try {
     const cached = localStorage.getItem('bibi_store_cached_ventas');
-    const ventas: Venta[] = cached ? JSON.parse(cached) : [];
+    let ventas: Venta[] = [];
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) ventas = parsed;
+      } catch {}
+    }
     ventas.unshift(savedSale);
     localStorage.setItem('bibi_store_cached_ventas', JSON.stringify(ventas));
   } catch {}
@@ -230,7 +253,10 @@ export async function getSales(): Promise<Venta[]> {
 
   try {
     const cached = localStorage.getItem('bibi_store_cached_ventas');
-    if (cached) return JSON.parse(cached);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed)) return parsed;
+    }
   } catch {}
   return [];
 }
@@ -254,7 +280,10 @@ export async function getFiados(): Promise<Fiado[]> {
 
   try {
     const cached = localStorage.getItem('bibi_store_cached_fiados');
-    if (cached) return JSON.parse(cached);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed)) return parsed;
+    }
   } catch {}
   return [];
 }
@@ -271,10 +300,16 @@ export async function saveFiado(fiado: Partial<Fiado>): Promise<boolean> {
 
   try {
     const cached = localStorage.getItem('bibi_store_cached_fiados');
-    const list: Fiado[] = cached ? JSON.parse(cached) : [];
+    let list: Fiado[] = [];
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed)) list = parsed;
+      } catch {}
+    }
     const targetId = fiado.id || `fiado_${Date.now()}`;
     const item = { ...fiado, id: targetId } as Fiado;
-    const idx = list.findIndex(f => f.id === targetId);
+    const idx = list.findIndex(f => f && f.id === targetId);
     if (idx >= 0) list[idx] = item;
     else list.unshift(item);
     localStorage.setItem('bibi_store_cached_fiados', JSON.stringify(list));
@@ -349,7 +384,10 @@ export async function getSecurityConfig(): Promise<SecurityConfig> {
 
   try {
     const cached = localStorage.getItem('bibi_store_security_pins');
-    if (cached) return JSON.parse(cached);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed && typeof parsed === 'object') return parsed;
+    }
   } catch {}
 
   return {
@@ -393,7 +431,10 @@ export async function getAccessCodes(): Promise<any[]> {
 
   try {
     const cached = localStorage.getItem('bibi_store_cached_codes');
-    if (cached) return JSON.parse(cached);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed)) return parsed;
+    }
   } catch {}
   return [];
 }
