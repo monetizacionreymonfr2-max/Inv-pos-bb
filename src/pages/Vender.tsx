@@ -51,20 +51,43 @@ export default function Vender() {
     try {
       const text = await file.text();
       let parsed = JSON.parse(text);
-      let prods: any[] = [];
+      let rawProds: any[] = [];
       if (Array.isArray(parsed)) {
-        prods = parsed;
+        rawProds = parsed;
       } else if (parsed && Array.isArray(parsed.productos)) {
-        prods = parsed.productos;
+        rawProds = parsed.productos;
       } else if (parsed && Array.isArray(parsed.products)) {
-        prods = parsed.products;
+        rawProds = parsed.products;
+      } else if (parsed && Array.isArray(parsed.data)) {
+        rawProds = parsed.data;
+      } else if (parsed && Array.isArray(parsed.items)) {
+        rawProds = parsed.items;
+      } else if (parsed && typeof parsed === 'object') {
+        const possibleKey = Object.keys(parsed).find(k => Array.isArray(parsed[k]));
+        if (possibleKey) {
+          rawProds = parsed[possibleKey];
+        } else {
+          rawProds = [parsed];
+        }
       } else {
         throw new Error("El archivo no contiene un formato de lista de productos válido.");
       }
 
-      if (prods.length === 0) {
+      if (rawProds.length === 0) {
         throw new Error("El archivo JSON no contiene productos.");
       }
+
+      const prods = rawProds.map((p, idx) => ({
+        id: String(p.id || p._id || `prod_${Date.now()}_${idx}`),
+        nombre: String(p.nombre || p.name || p.title || p.descripcion || `Producto ${idx + 1}`),
+        precio_usd: Number(p.precio_usd !== undefined ? p.precio_usd : (p.precio !== undefined ? p.precio : (p.price !== undefined ? p.price : 0))) || 0,
+        costo_usd: Number(p.costo_usd !== undefined ? p.costo_usd : (p.costo !== undefined ? p.costo : (p.cost !== undefined ? p.cost : 0))) || 0,
+        stock: Number(p.stock !== undefined ? p.stock : (p.existencia !== undefined ? p.existencia : (p.cantidad !== undefined ? p.cantidad : 0))) || 0,
+        unidad_medida: (p.unidad_medida === 'kg' || p.unidad === 'kg') ? 'kg' : 'unid',
+        categoria: p.categoria || p.category || 'Sin Categoría',
+        codigo_barras: String(p.codigo_barras || p.codigo || p.barcode || p.ref || `N/A_${idx}`),
+        imagen_url: String(p.imagen_url || p.imagen || p.image || p.photo || '')
+      }));
 
       // Guardar en memoria local
       setProductos(prods);

@@ -177,28 +177,72 @@ app.delete('/api/vps/productos/:id', (req, res) => {
   }
 });
 
+// Helper to normalize product structure from backups / external imports
+function normalizeProduct(p, idx) {
+  if (!p || typeof p !== 'object') return null;
+  const nombre = p.nombre || p.name || p.title || p.descripcion || `Producto ${idx + 1}`;
+  const precio_usd = Number(p.precio_usd !== undefined ? p.precio_usd : (p.precio !== undefined ? p.precio : (p.price !== undefined ? p.price : 0))) || 0;
+  const costo_usd = Number(p.costo_usd !== undefined ? p.costo_usd : (p.costo !== undefined ? p.costo : (p.cost !== undefined ? p.cost : 0))) || 0;
+  const stock = Number(p.stock !== undefined ? p.stock : (p.existencia !== undefined ? p.existencia : (p.cantidad !== undefined ? p.cantidad : 0))) || 0;
+  const unidad_medida = (p.unidad_medida === 'kg' || p.unidad === 'kg' || p.medida === 'kg') ? 'kg' : 'unid';
+  const categoria = p.categoria || p.category || p.departamento || 'Sin Categoría';
+  const codigo_barras = String(p.codigo_barras || p.codigo || p.barcode || p.ref || `N/A_${idx}`);
+  const imagen_url = String(p.imagen_url || p.imagen || p.image || p.photo || '');
+  const id = String(p.id || p._id || `prod_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 5)}`);
+
+  return {
+    id,
+    nombre,
+    precio_usd,
+    costo_usd,
+    stock,
+    unidad_medida,
+    categoria,
+    codigo_barras,
+    imagen_url
+  };
+}
+
 // POST /api/products/bulk -> Poblar masivamente el catálogo desde respaldo JSON (con soporte de chunks/append)
 app.post('/api/products/bulk', (req, res) => {
   try {
     let prods = [];
     let append = false;
-    if (Array.isArray(req.body)) {
-      prods = req.body;
-    } else if (req.body && Array.isArray(req.body.products)) {
-      prods = req.body.products;
-      append = !!req.body.append;
-    } else if (req.body && Array.isArray(req.body.productos)) {
-      prods = req.body.productos;
-      append = !!req.body.append;
+    const body = req.body;
+
+    if (Array.isArray(body)) {
+      prods = body;
+    } else if (body && Array.isArray(body.products)) {
+      prods = body.products;
+      append = !!body.append;
+    } else if (body && Array.isArray(body.productos)) {
+      prods = body.productos;
+      append = !!body.append;
+    } else if (body && Array.isArray(body.data)) {
+      prods = body.data;
+      append = !!body.append;
+    } else if (body && Array.isArray(body.items)) {
+      prods = body.items;
+      append = !!body.append;
+    } else if (body && typeof body === 'object') {
+      const possibleKey = Object.keys(body).find(k => Array.isArray(body[k]));
+      if (possibleKey) {
+        prods = body[possibleKey];
+        append = !!body.append;
+      } else {
+        prods = [body];
+      }
     } else {
-      return res.status(400).json({ error: 'Se esperaba un array de productos' });
+      return res.status(400).json({ error: 'Se esperaba un array o formato válido de productos' });
     }
 
-    // Unify IDs if missing
-    const sanitized = prods.map((p, idx) => ({
-      ...p,
-      id: p.id || `prod_${Date.now()}_${idx}`
-    }));
+    const sanitized = prods
+      .map((p, idx) => normalizeProduct(p, idx))
+      .filter(Boolean);
+
+    if (sanitized.length === 0) {
+      return res.status(400).json({ error: 'El archivo no contiene productos válidos' });
+    }
 
     let existing = [];
     if (append && fs.existsSync(PRODUCTOS_FILE)) {
